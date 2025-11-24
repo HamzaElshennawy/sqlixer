@@ -176,7 +176,15 @@ The lexer successfully identifies all token types, handles comments, and reports
 
 ---
 
-## 7. Sample Output
+## 7. Sample Input
+
+```sql
+CREATE TABLE students (id INT, name TEXT);
+INSERT INTO students VALUES (1, 'Ali' );
+SELECT name FROM students WHERE id = 1;
+```
+
+## 8. Sample Output
 
 ```plain
 ================================================================================
@@ -196,4 +204,11 @@ TEXT                 TEXT                      1          37
 RIGHT_PAREN          )                         1          41
 SEMICOLON            ;                         1          42
 ================================================================================
+```
+
+## 9. Sample Errors
+
+```plain
+[ERROR] invalid character '@' at line 1, position 8.
+[ERROR] unclosed string starting at line 1.
 ```
