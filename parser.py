@@ -337,12 +337,10 @@ class Parser:
         return self.parse_comparison()
 
     def parse_comparison(self):
-        if self.current().type == "LEFT_PAREN":
-            self.advance()
-            node = self.parse_condition()
-            self.match("RIGHT_PAREN")
-            return node
-        left = self.parse_primary()
+
+        # We start by parsing an expression (which includes factors, which includes parenthesized conditions)
+        left = self.parse_expression()
+
         if self.current().type in {
             "EQUAL",
             "NOT_EQUAL",
@@ -353,65 +351,113 @@ class Parser:
         }:
             op = self.current().lexeme
             self.advance()
-            right = self.parse_primary()
+            right = self.parse_expression()
             return BinaryOpNode(op, left, right)
+
         return left
 
-    def parse_primary(self):
+    # Expression parsing (lowest precedence for arithmetic)
+    def parse_expression(self):
+        left = self.parse_term()
+        while self.current().type in {"PLUS", "MINUS"}:
+            op = self.current().lexeme
+            self.advance()
+            right = self.parse_term()
+            left = BinaryOpNode(op, left, right)
+        return left
+
+    def parse_term(self):
+        left = self.parse_factor()
+        while self.current().type in {"MULTIPLY", "DIVIDE"}:
+            op = self.current().lexeme
+            self.advance()
+            right = self.parse_factor()
+            left = BinaryOpNode(op, left, right)
+        return left
+
+    def parse_factor(self):
         t = self.current()
+        if t.type == "LEFT_PAREN":
+            self.advance()
+            node = self.parse_condition()
+            self.match("RIGHT_PAREN")
+            return node
+
         if t.type == "IDENTIFIER":
             self.advance()
             return ColumnNode(t.lexeme)
+
         if t.type in {"NUMBER", "FLOAT", "STRING"}:
             self.advance()
             return LiteralNode(t.lexeme)
-        self._error("Expected identifier, number or string in condition", t)
-        # return a literal placeholder to continue
+
+        self._error("Expected identifier, number, string or '('", t)
         self.advance()
         return LiteralNode(None)
 
 
-def pprint_ast(node, indent=0):
-    pad = "  " * indent
+def pprint_ast(node, prefix="", is_last=True):
+    connector = "└── " if is_last else "├── "
+
+    # Determine string representation and children
+    node_str = ""
+    children = []
+
     if isinstance(node, QueryNode):
-        print(pad + "Query")
-        for s in node.statements:
-            pprint_ast(s, indent + 1)
+        node_str = "Query"
+        children = node.statements
     elif isinstance(node, CreateNode):
-        print(pad + f"Create table={node.table_name}")
-        for c in node.columns:
-            print(pad + f"  Column: {c[0]} {c[1]}")
+        node_str = f"Create Table: {node.table_name}"
+        children = [f"Column: {c[0]} {c[1]}" for c in node.columns]
     elif isinstance(node, InsertNode):
-        print(pad + f"Insert into={node.table_name} values={node.values}")
+        node_str = f"Insert into: {node.table_name}"
+        children = [f"Value: {v}" for v in node.values]
     elif isinstance(node, SelectNode):
-        print(pad + f"Select from={node.table_name} columns={node.select_list}")
+        node_str = f"Select from: {node.table_name}"
+        children = [f"Column: {c}" for c in node.select_list]
         if node.where:
-            print(pad + "  Where:")
-            pprint_ast(node.where, indent + 2)
+            children.append(node.where)
     elif isinstance(node, UpdateNode):
-        print(pad + f"Update {node.table_name} set={node.assignments}")
+        node_str = f"Update: {node.table_name}"
+        children = [f"Set: {k} = {v}" for k, v in node.assignments]
         if node.where:
-            pprint_ast(node.where, indent + 1)
+            children.append(node.where)
     elif isinstance(node, DeleteNode):
-        print(pad + f"Delete from={node.table_name}")
+        node_str = f"Delete from: {node.table_name}"
         if node.where:
-            pprint_ast(node.where, indent + 1)
+            children.append(node.where)
     elif isinstance(node, BinaryOpNode):
-        print(pad + f"BinOp {node.op}")
-        pprint_ast(node.left, indent + 1)
-        pprint_ast(node.right, indent + 1)
+        node_str = f"BinaryOp: {node.op}"
+        children = [node.left, node.right]
     elif isinstance(node, NotNode):
-        print(pad + "NOT")
-        pprint_ast(node.operand, indent + 1)
+        node_str = "NOT"
+        children = [node.operand]
     elif isinstance(node, ColumnNode):
-        print(pad + f"Col {node.name}")
+        node_str = f"ColumnRef: {node.name}"
     elif isinstance(node, LiteralNode):
-        print(pad + f"Lit {node.value}")
+        node_str = f"Literal: {node.value}"
+    elif isinstance(node, str):
+        node_str = node
     else:
-        print(pad + f"{type(node).__name__}")
+        node_str = f"Unknown: {type(node).__name__}"
+
+    print(prefix + connector + node_str)
+
+    child_prefix = prefix + ("    " if is_last else "│   ")
+
+    num_children = len(children)
+    for i, child in enumerate(children):
+        pprint_ast(child, child_prefix, i == num_children - 1)
 
 
 def main(path: str, args: argparse.Namespace):
+    # Ensure we can print tree characters (utf-8) even on Windows consoles
+    if sys.stdout.encoding.lower() != "utf-8":
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except AttributeError:
+            # For older python versions that don't support reconfigure
+            pass
     try:
         with open(path, "r", encoding="utf-8") as f:
             src = f.read()
@@ -469,8 +515,6 @@ def main(path: str, args: argparse.Namespace):
         for i, e in enumerate(parser.errors, 1):
             print(f"{i}. {e}")
         print("=" * 80)
-    else:
-        print("\nParsed successfully.")
 
 
 if __name__ == "__main__":
