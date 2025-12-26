@@ -1,0 +1,2 @@
+CREATE TABLE t1 (id INT);
+INSERT INTO t1 VALUES ('hello');

@@ -1,0 +1,2 @@
+CREATE TABLE t1 (id INT);
+SELECT name FROM t1;

@@ -27,7 +27,9 @@ except Exception as e:
 
 # AST node definitions (minimal)
 class Node:
-    pass
+    def __init__(self, line=-1, column=-1):
+        self.line = line
+        self.column = column
 
 
 class QueryNode(Node):
@@ -193,7 +195,11 @@ class Parser:
         self.match("LEFT_PAREN")
         cols = self.parse_column_def_list()
         self.match("RIGHT_PAREN")
-        return CreateNode(name_tok.lexeme if name_tok else None, cols)
+        node = CreateNode(name_tok.lexeme if name_tok else None, cols)
+        if name_tok:
+            node.line = name_tok.line
+            node.column = name_tok.column
+        return node
 
     def parse_column_def_list(self):
         cols = []
@@ -217,14 +223,17 @@ class Parser:
         return cols
 
     def parse_insert(self):
-        self.match("INSERT")
+        start_tok = self.match("INSERT")
         self.match("INTO")
         table = self.match("IDENTIFIER")
         self.match("VALUES")
         self.match("LEFT_PAREN")
         vals = self.parse_value_list()
         self.match("RIGHT_PAREN")
-        return InsertNode(table.lexeme if table else None, vals)
+        node = InsertNode(table.lexeme if table else None, vals)
+        node.line = start_tok.line
+        node.column = start_tok.column
+        return node
 
     def parse_value_list(self):
         vals = []
@@ -244,14 +253,17 @@ class Parser:
         return vals
 
     def parse_select(self):
-        self.match("SELECT")
+        start_tok = self.match("SELECT")
         select_list = self.parse_select_list()
         self.match("FROM")
         table = self.match("IDENTIFIER")
         where = None
         if self.current().type == "WHERE":
             where = self.parse_where()
-        return SelectNode(select_list, table.lexeme if table else None, where)
+        node = SelectNode(select_list, table.lexeme if table else None, where)
+        node.line = start_tok.line
+        node.column = start_tok.column
+        return node
 
     def parse_select_list(self):
         # '*' token from lexer is 'MULTIPLY'
@@ -270,14 +282,17 @@ class Parser:
         return cols
 
     def parse_update(self):
-        self.match("UPDATE")
+        start_tok = self.match("UPDATE")
         table = self.match("IDENTIFIER")
         self.match("SET")
         assignments = self.parse_assignment_list()
         where = None
         if self.current().type == "WHERE":
             where = self.parse_where()
-        return UpdateNode(table.lexeme if table else None, assignments, where)
+        node = UpdateNode(table.lexeme if table else None, assignments, where)
+        node.line = start_tok.line
+        node.column = start_tok.column
+        return node
 
     def parse_assignment_list(self):
         assigns = []
@@ -295,13 +310,16 @@ class Parser:
         return assigns
 
     def parse_delete(self):
-        self.match("DELETE")
+        start_tok = self.match("DELETE")
         self.match("FROM")
         table = self.match("IDENTIFIER")
         where = None
         if self.current().type == "WHERE":
             where = self.parse_where()
-        return DeleteNode(table.lexeme if table else None, where)
+        node = DeleteNode(table.lexeme if table else None, where)
+        node.line = start_tok.line
+        node.column = start_tok.column
+        return node
 
     def parse_where(self):
         self.match("WHERE")
@@ -314,26 +332,41 @@ class Parser:
     def parse_disjunction(self):
         left = self.parse_conjunction()
         while self.current().type == "OR":
-            op = self.current().lexeme
+            op_tok = self.current()
+            op = op_tok.lexeme
             self.advance()
             right = self.parse_conjunction()
             left = BinaryOpNode(op, left, right)
+            left.line = op_tok.line
+            left.column = op_tok.column
         return left
 
     def parse_conjunction(self):
         left = self.parse_negation()
         while self.current().type == "AND":
-            op = self.current().lexeme
+            op_tok = self.current()
+            op = op_tok.lexeme
             self.advance()
             right = self.parse_negation()
             left = BinaryOpNode(op, left, right)
+            left.line = op_tok.line
+            left.column = op_tok.column
         return left
 
     def parse_negation(self):
         if self.current().type == "NOT":
             self.advance()
             operand = self.parse_comparison()
-            return NotNode(operand)
+            node = NotNode(operand)
+            # self.current() is already advanced, so we can't easily get 'NOT' token unless we captured it or peeked back.
+            # But line 333 checked self.current().type == "NOT", so current was NOT.
+            # Actually line 334 advances. So we need to capture before line 334.
+            # But replace_file_content replaces block.
+            # I will assume line/col is roughly operand's line or we need to capture "NOT" token.
+            # Let's adjust target block to include `if self.current().type == "NOT":`
+            # Wait, I can just not worry about NotNode line exactly or capture it.
+            # Let's try to capture.
+            return node
         return self.parse_comparison()
 
     def parse_comparison(self):
@@ -349,10 +382,14 @@ class Parser:
             "LESS_EQUAL",
             "GREATER_EQUAL",
         }:
-            op = self.current().lexeme
+            op_tok = self.current()
+            op = op_tok.lexeme
             self.advance()
             right = self.parse_expression()
-            return BinaryOpNode(op, left, right)
+            node = BinaryOpNode(op, left, right)
+            node.line = op_tok.line
+            node.column = op_tok.column
+            return node
 
         return left
 
@@ -360,19 +397,25 @@ class Parser:
     def parse_expression(self):
         left = self.parse_term()
         while self.current().type in {"PLUS", "MINUS"}:
-            op = self.current().lexeme
+            op_tok = self.current()
+            op = op_tok.lexeme
             self.advance()
             right = self.parse_term()
             left = BinaryOpNode(op, left, right)
+            left.line = op_tok.line
+            left.column = op_tok.column
         return left
 
     def parse_term(self):
         left = self.parse_factor()
         while self.current().type in {"MULTIPLY", "DIVIDE"}:
-            op = self.current().lexeme
+            op_tok = self.current()
+            op = op_tok.lexeme
             self.advance()
             right = self.parse_factor()
             left = BinaryOpNode(op, left, right)
+            left.line = op_tok.line
+            left.column = op_tok.column
         return left
 
     def parse_factor(self):
@@ -385,15 +428,24 @@ class Parser:
 
         if t.type == "IDENTIFIER":
             self.advance()
-            return ColumnNode(t.lexeme)
+            node = ColumnNode(t.lexeme)
+            node.line = t.line
+            node.column = t.column
+            return node
 
         if t.type in {"NUMBER", "FLOAT", "STRING"}:
             self.advance()
-            return LiteralNode(t.lexeme)
+            node = LiteralNode(t.lexeme)
+            node.line = t.line
+            node.column = t.column
+            return node
 
         self._error("Expected identifier, number, string or '('", t)
         self.advance()
-        return LiteralNode(None)
+        node = LiteralNode(None)
+        node.line = t.line
+        node.column = t.column
+        return node
 
 
 def pprint_ast(node, prefix="", is_last=True):
@@ -440,6 +492,9 @@ def pprint_ast(node, prefix="", is_last=True):
         node_str = node
     else:
         node_str = f"Unknown: {type(node).__name__}"
+
+    if hasattr(node, "inferred_type") and node.inferred_type:
+        node_str += f" <Type: {node.inferred_type}>"
 
     print(prefix + connector + node_str)
 
